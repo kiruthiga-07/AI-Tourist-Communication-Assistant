@@ -2,3 +2,5 @@ streamlit
 faster-whisper
 deep-translator
 audio-recorder-streamlit
+pydub
+SpeechRecognition
