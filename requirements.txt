@@ -4,3 +4,4 @@ deep-translator
 audio-recorder-streamlit
 pydub
 SpeechRecognition
+gTTS
