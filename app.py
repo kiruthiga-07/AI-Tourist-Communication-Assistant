@@ -2,10 +2,19 @@ import streamlit as st
 from faster_whisper import WhisperModel
 from deep_translator import GoogleTranslator, MyMemoryTranslator
 from audio_recorder_streamlit import audio_recorder
+from pydub import AudioSegment
+import io
 import subprocess
 import tempfile
 import time
 import os
+
+# Optional online STT fallback (needs internet, no API key required)
+try:
+    import speech_recognition as sr
+    GOOGLE_STT_AVAILABLE = True
+except ImportError:
+    GOOGLE_STT_AVAILABLE = False
 
 st.set_page_config(page_title="AI Tourist Communication Assistant", page_icon="🗣️", layout="centered")
 
@@ -84,16 +93,9 @@ LANGUAGES = {
 TRANSLATE_CODE_OVERRIDES = {"zh": "zh-CN"}
 TTS_CODE_OVERRIDES = {"zh": "cmn"}
 MYMEMORY_CODE_OVERRIDES = {
-    "ta": "ta-IN",
-    "en": "en-GB",
-    "ja": "ja-JP",
-    "fr": "fr-FR",
-    "es": "es-ES",
-    "de": "de-DE",
-    "hi": "hi-IN",
-    "zh": "zh-CN",
-    "ko": "ko-KR",
-    "ar": "ar-SA",
+    "ta": "ta-IN", "en": "en-GB", "ja": "ja-JP", "fr": "fr-FR",
+    "es": "es-ES", "de": "de-DE", "hi": "hi-IN", "zh": "zh-CN",
+    "ko": "ko-KR", "ar": "ar-SA",
 }
 
 INTENTS = {
@@ -106,9 +108,19 @@ INTENTS = {
     "Shopping": ["price", "cost", "buy", "shop", "how much", "discount"],
 }
 
+# Domain-specific vocabulary to bias Whisper's decoding toward tourist phrases
+# and common Tanglish (Tamil + English code-switched) patterns.
+TOURIST_PROMPT = (
+    "Tourist phrases about hospital, doctor, police, emergency, hotel, "
+    "bus, train, taxi, restaurant, directions, nearest, help, lost, "
+    "enga iruku, epdi poganum, evlo, venum, romba nandri."
+)
+
+
 @st.cache_resource
 def load_whisper():
     return WhisperModel("small", device="cpu", compute_type="int8")
+
 
 def detect_intent(text):
     text_lower = text.lower()
@@ -118,22 +130,66 @@ def detect_intent(text):
                 return intent
     return "General"
 
+
+def preprocess_audio(audio_bytes):
+    """Convert to 16kHz mono and normalize loudness before feeding Whisper.
+    Quiet/noisy raw mic input is one of the biggest real-world causes of bad
+    transcriptions, more than model size in a lot of cases."""
+    audio = AudioSegment.from_file(io.BytesIO(audio_bytes))
+    audio = audio.set_frame_rate(16000).set_channels(1)
+    change = -20.0 - audio.dBFS
+    audio = audio.apply_gain(change)
+    buf = io.BytesIO()
+    audio.export(buf, format="wav")
+    return buf.getvalue()
+
+
 def speech_to_text(audio_bytes, lang_code):
     if not audio_bytes or len(audio_bytes) < 8000:
         return ""
     model = load_whisper()
+    audio_bytes = preprocess_audio(audio_bytes)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp.write(audio_bytes)
         path = tmp.name
-    segments, info = model.transcribe(
-        path,
-        language=lang_code,
-        vad_filter=True,
-        vad_parameters=dict(min_silence_duration_ms=500),
-        beam_size=5,
-    )
-    os.remove(path)
-    return " ".join(seg.text for seg in segments).strip()
+    try:
+        segments, info = model.transcribe(
+            path,
+            language=lang_code,
+            vad_filter=True,
+            vad_parameters=dict(min_silence_duration_ms=300, speech_pad_ms=200),
+            beam_size=5,
+            best_of=5,
+            condition_on_previous_text=False,
+            temperature=[0.0, 0.2, 0.4],
+            initial_prompt=TOURIST_PROMPT if lang_code in ("ta", "en") else None,
+        )
+        return " ".join(seg.text for seg in segments).strip()
+    finally:
+        os.remove(path)
+
+
+def speech_to_text_google(audio_bytes, lang_code):
+    """Higher-accuracy fallback using the free Google Web Speech backend.
+    Needs internet, no API key. Often better than local Whisper-small on
+    heavily code-switched Tanglish speech."""
+    if not GOOGLE_STT_AVAILABLE:
+        return ""
+    r = sr.Recognizer()
+    audio_bytes = preprocess_audio(audio_bytes)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        tmp.write(audio_bytes)
+        path = tmp.name
+    try:
+        with sr.AudioFile(path) as source:
+            audio = r.record(source)
+        lang = MYMEMORY_CODE_OVERRIDES.get(lang_code, lang_code)
+        return r.recognize_google(audio, language=lang)
+    except (sr.UnknownValueError, sr.RequestError):
+        return ""
+    finally:
+        os.remove(path)
+
 
 @st.cache_data(show_spinner=False)
 def translate_text(text, source, target):
@@ -148,20 +204,24 @@ def translate_text(text, source, target):
     mm_tgt = MYMEMORY_CODE_OVERRIDES.get(target, target)
     return MyMemoryTranslator(source=mm_src, target=mm_tgt).translate(text)
 
+
 def text_to_speech(text, lang_code):
     voice = TTS_CODE_OVERRIDES.get(lang_code, lang_code)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         path = tmp.name
-    subprocess.run(["espeak-ng", "-v", voice, "-w", path, text], check=True)
-    with open(path, "rb") as f:
-        data = f.read()
-    os.remove(path)
-    return data
+    try:
+        subprocess.run(["espeak-ng", "-v", voice, "-w", path, text], check=True)
+        with open(path, "rb") as f:
+            data = f.read()
+        return data
+    finally:
+        os.remove(path)
+
 
 st.markdown("""
 <div class="hero">
-    <h1>🗣️ AI Tourist Communication Assistant</h1>
-    <p>Speak in your language, get instantly translated speech back — built for real tourist situations like hospitals, directions and emergencies.</p>
+<h1>🗣️ AI Tourist Communication Assistant</h1>
+<p>Speak in your language, get instantly translated speech back — built for real tourist situations like hospitals, directions and emergencies.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -172,16 +232,32 @@ with col1:
     source_lang_name = st.selectbox("Your language", list(LANGUAGES.keys()), index=0)
 with col2:
     target_lang_name = st.selectbox("Translate to", list(LANGUAGES.keys()), index=1)
+
+if GOOGLE_STT_AVAILABLE:
+    use_google_stt = st.checkbox(
+        "Use higher-accuracy online speech recognition (needs internet)",
+        value=False,
+        help="Falls back to local offline Whisper if this is off or if it fails.",
+    )
+else:
+    use_google_stt = False
 st.markdown('</div>', unsafe_allow_html=True)
 
 source_lang = LANGUAGES[source_lang_name]
 target_lang = LANGUAGES[target_lang_name]
 
+
+def transcribe(audio_bytes, lang_code):
+    if use_google_stt:
+        text = speech_to_text_google(audio_bytes, lang_code)
+        if text:
+            return text
+    return speech_to_text(audio_bytes, lang_code)
+
+
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">1. Say something</div>', unsafe_allow_html=True)
-
 tab1, tab2 = st.tabs(["🎤 Record", "⌨️ Type"])
-
 input_text = None
 
 with tab1:
@@ -190,7 +266,7 @@ with tab1:
         st.audio(audio_bytes, format="audio/wav")
         with st.spinner("Transcribing..."):
             try:
-                input_text = speech_to_text(audio_bytes, source_lang)
+                input_text = transcribe(audio_bytes, source_lang)
                 if input_text:
                     st.success(f"Heard: {input_text}")
                 else:
@@ -202,13 +278,11 @@ with tab2:
     typed = st.text_input("Type your sentence")
     if typed:
         input_text = typed
-
 st.markdown('</div>', unsafe_allow_html=True)
 
 if input_text:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">2. Translation</div>', unsafe_allow_html=True)
-
     intent = detect_intent(input_text)
     badge_class = "intent-emergency" if intent == "Emergency" else "intent-normal"
     badge_text = f"🚨 {intent}" if intent == "Emergency" else intent
@@ -222,7 +296,6 @@ if input_text:
             st.audio(audio_data, format="audio/wav")
         except Exception as e:
             st.error(f"Translation failed: {e}")
-
     st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
@@ -232,7 +305,7 @@ if input_text:
         st.audio(reply_audio, format="audio/wav")
         with st.spinner("Processing reply..."):
             try:
-                reply_text = speech_to_text(reply_audio, target_lang)
+                reply_text = transcribe(reply_audio, target_lang)
                 if not reply_text:
                     st.warning("No clear speech detected — try recording again, closer to the mic.")
                 else:
