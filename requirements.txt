@@ -1,0 +1,6 @@
+streamlit
+SpeechRecognition
+deep-translator
+gTTS
+audio-recorder-streamlit
+pydub
