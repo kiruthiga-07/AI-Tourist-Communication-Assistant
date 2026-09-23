@@ -6,9 +6,9 @@ import subprocess
 import tempfile
 import time
 import os
- 
+
 st.set_page_config(page_title="AI Tourist Communication Assistant", page_icon="🗣️", layout="centered")
- 
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap');
@@ -67,7 +67,7 @@ div.stButton > button {
 div.stButton > button:hover { background-color: #115e59; color: white; }
 </style>
 """, unsafe_allow_html=True)
- 
+
 LANGUAGES = {
     "Tamil": "ta",
     "English": "en",
@@ -80,7 +80,7 @@ LANGUAGES = {
     "Korean": "ko",
     "Arabic": "ar",
 }
- 
+
 TRANSLATE_CODE_OVERRIDES = {"zh": "zh-CN"}
 TTS_CODE_OVERRIDES = {"zh": "cmn"}
 MYMEMORY_CODE_OVERRIDES = {
@@ -95,7 +95,7 @@ MYMEMORY_CODE_OVERRIDES = {
     "ko": "ko-KR",
     "ar": "ar-SA",
 }
- 
+
 INTENTS = {
     "Emergency": ["emergency", "help", "danger", "fire", "police", "ambulance", "accident", "lost", "steal", "stolen", "robbed"],
     "Medical": ["hospital", "doctor", "medicine", "pain", "sick", "clinic", "pharmacy", "injured"],
@@ -105,11 +105,11 @@ INTENTS = {
     "Accommodation": ["hotel", "room", "stay", "booking", "check in", "check out"],
     "Shopping": ["price", "cost", "buy", "shop", "how much", "discount"],
 }
- 
+
 @st.cache_resource
 def load_whisper():
     return WhisperModel("small", device="cpu", compute_type="int8")
- 
+
 def detect_intent(text):
     text_lower = text.lower()
     for intent, keywords in INTENTS.items():
@@ -117,16 +117,24 @@ def detect_intent(text):
             if kw in text_lower:
                 return intent
     return "General"
- 
+
 def speech_to_text(audio_bytes, lang_code):
+    if not audio_bytes or len(audio_bytes) < 8000:
+        return ""
     model = load_whisper()
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         tmp.write(audio_bytes)
         path = tmp.name
-    segments, _ = model.transcribe(path, language=lang_code)
+    segments, info = model.transcribe(
+        path,
+        language=lang_code,
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=500),
+        beam_size=5,
+    )
     os.remove(path)
     return " ".join(seg.text for seg in segments).strip()
- 
+
 @st.cache_data(show_spinner=False)
 def translate_text(text, source, target):
     src = TRANSLATE_CODE_OVERRIDES.get(source, source)
@@ -139,7 +147,7 @@ def translate_text(text, source, target):
     mm_src = MYMEMORY_CODE_OVERRIDES.get(source, source)
     mm_tgt = MYMEMORY_CODE_OVERRIDES.get(target, target)
     return MyMemoryTranslator(source=mm_src, target=mm_tgt).translate(text)
- 
+
 def text_to_speech(text, lang_code):
     voice = TTS_CODE_OVERRIDES.get(lang_code, lang_code)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -149,14 +157,14 @@ def text_to_speech(text, lang_code):
         data = f.read()
     os.remove(path)
     return data
- 
+
 st.markdown("""
 <div class="hero">
     <h1>🗣️ AI Tourist Communication Assistant</h1>
     <p>Speak in your language, get instantly translated speech back — built for real tourist situations like hospitals, directions and emergencies.</p>
 </div>
 """, unsafe_allow_html=True)
- 
+
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">Choose languages</div>', unsafe_allow_html=True)
 col1, col2 = st.columns(2)
@@ -165,17 +173,17 @@ with col1:
 with col2:
     target_lang_name = st.selectbox("Translate to", list(LANGUAGES.keys()), index=1)
 st.markdown('</div>', unsafe_allow_html=True)
- 
+
 source_lang = LANGUAGES[source_lang_name]
 target_lang = LANGUAGES[target_lang_name]
- 
+
 st.markdown('<div class="card">', unsafe_allow_html=True)
 st.markdown('<div class="section-title">1. Say something</div>', unsafe_allow_html=True)
- 
+
 tab1, tab2 = st.tabs(["🎤 Record", "⌨️ Type"])
- 
+
 input_text = None
- 
+
 with tab1:
     audio_bytes = audio_recorder(text="Click to record", recording_color="#e63946", neutral_color="#0f766e")
     if audio_bytes:
@@ -183,26 +191,29 @@ with tab1:
         with st.spinner("Transcribing..."):
             try:
                 input_text = speech_to_text(audio_bytes, source_lang)
-                st.success(f"Heard: {input_text}")
+                if input_text:
+                    st.success(f"Heard: {input_text}")
+                else:
+                    st.warning("No clear speech detected — try recording again, closer to the mic.")
             except Exception as e:
                 st.error(f"Could not recognize speech: {e}")
- 
+
 with tab2:
     typed = st.text_input("Type your sentence")
     if typed:
         input_text = typed
- 
+
 st.markdown('</div>', unsafe_allow_html=True)
- 
+
 if input_text:
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">2. Translation</div>', unsafe_allow_html=True)
- 
+
     intent = detect_intent(input_text)
     badge_class = "intent-emergency" if intent == "Emergency" else "intent-normal"
     badge_text = f"🚨 {intent}" if intent == "Emergency" else intent
     st.markdown(f'<span class="intent-badge {badge_class}">{badge_text}</span>', unsafe_allow_html=True)
- 
+
     with st.spinner("Translating..."):
         try:
             translated = translate_text(input_text, source_lang, target_lang)
@@ -211,9 +222,9 @@ if input_text:
             st.audio(audio_data, format="audio/wav")
         except Exception as e:
             st.error(f"Translation failed: {e}")
- 
+
     st.markdown('</div>', unsafe_allow_html=True)
- 
+
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.markdown('<div class="section-title">3. Foreigner\'s reply</div>', unsafe_allow_html=True)
     reply_audio = audio_recorder(text="Record reply", key="reply_recorder", recording_color="#f59e0b", neutral_color="#0f766e")
@@ -222,11 +233,14 @@ if input_text:
         with st.spinner("Processing reply..."):
             try:
                 reply_text = speech_to_text(reply_audio, target_lang)
-                st.success(f"Heard: {reply_text}")
-                back_translated = translate_text(reply_text, target_lang, source_lang)
-                st.markdown(f'<div class="result-box">{back_translated}</div>', unsafe_allow_html=True)
-                back_audio = text_to_speech(back_translated, source_lang)
-                st.audio(back_audio, format="audio/wav")
+                if not reply_text:
+                    st.warning("No clear speech detected — try recording again, closer to the mic.")
+                else:
+                    st.success(f"Heard: {reply_text}")
+                    back_translated = translate_text(reply_text, target_lang, source_lang)
+                    st.markdown(f'<div class="result-box">{back_translated}</div>', unsafe_allow_html=True)
+                    back_audio = text_to_speech(back_translated, source_lang)
+                    st.audio(back_audio, format="audio/wav")
             except Exception as e:
                 st.error(f"Could not process reply: {e}")
     st.markdown('</div>', unsafe_allow_html=True)
