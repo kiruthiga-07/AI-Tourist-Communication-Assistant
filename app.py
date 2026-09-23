@@ -1,9 +1,10 @@
 import streamlit as st
 from faster_whisper import WhisperModel
-from deep_translator import GoogleTranslator
+from deep_translator import GoogleTranslator, MyMemoryTranslator
 from audio_recorder_streamlit import audio_recorder
 import subprocess
 import tempfile
+import time
 import os
 
 st.set_page_config(page_title="AI Tourist Communication Assistant", page_icon="🗣️", layout="centered")
@@ -114,10 +115,16 @@ def speech_to_text(audio_bytes, lang_code):
     os.remove(path)
     return " ".join(seg.text for seg in segments).strip()
 
+@st.cache_data(show_spinner=False)
 def translate_text(text, source, target):
     src = TRANSLATE_CODE_OVERRIDES.get(source, source)
     tgt = TRANSLATE_CODE_OVERRIDES.get(target, target)
-    return GoogleTranslator(source=src, target=tgt).translate(text)
+    for attempt in range(3):
+        try:
+            return GoogleTranslator(source=src, target=tgt).translate(text)
+        except Exception:
+            time.sleep(1.5 * (attempt + 1))
+    return MyMemoryTranslator(source=src, target=tgt).translate(text)
 
 def text_to_speech(text, lang_code):
     voice = TTS_CODE_OVERRIDES.get(lang_code, lang_code)
