@@ -83,6 +83,18 @@ LANGUAGES = {
 
 TRANSLATE_CODE_OVERRIDES = {"zh": "zh-CN"}
 TTS_CODE_OVERRIDES = {"zh": "cmn"}
+MYMEMORY_CODE_OVERRIDES = {
+    "ta": "ta-IN",
+    "en": "en-GB",
+    "ja": "ja-JP",
+    "fr": "fr-FR",
+    "es": "es-ES",
+    "de": "de-DE",
+    "hi": "hi-IN",
+    "zh": "zh-CN",
+    "ko": "ko-KR",
+    "ar": "ar-SA",
+}
 
 INTENTS = {
     "Emergency": ["emergency", "help", "danger", "fire", "police", "ambulance", "accident", "lost", "steal", "stolen", "robbed"],
@@ -124,7 +136,9 @@ def translate_text(text, source, target):
             return GoogleTranslator(source=src, target=tgt).translate(text)
         except Exception:
             time.sleep(1.5 * (attempt + 1))
-    return MyMemoryTranslator(source=src, target=tgt).translate(text)
+    mm_src = MYMEMORY_CODE_OVERRIDES.get(source, source)
+    mm_tgt = MYMEMORY_CODE_OVERRIDES.get(target, target)
+    return MyMemoryTranslator(source=mm_src, target=mm_tgt).translate(text)
 
 def text_to_speech(text, lang_code):
     voice = TTS_CODE_OVERRIDES.get(lang_code, lang_code)
