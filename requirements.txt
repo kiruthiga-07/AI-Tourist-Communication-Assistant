@@ -1,6 +1,6 @@
 streamlit
-SpeechRecognition
-deep-translator
-gTTS
+faster-whisper
+transformers
+torch
+sentencepiece
 audio-recorder-streamlit
-pydub
