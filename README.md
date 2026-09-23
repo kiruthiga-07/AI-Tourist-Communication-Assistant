@@ -1,20 +1,20 @@
-# AI Tourist Communication Assistant (Offline)
+# AI Tourist Communication Assistant
 
-A real-time speech-to-speech translation tool for tourists, built around actual travel scenarios — asking for a hospital, getting lost, calling for help — instead of generic phrase translation. Runs entirely offline: no Google/Cloud APIs, no internet calls at inference time.
+A real-time speech-to-speech translation tool for tourists, built around actual travel scenarios — asking for a hospital, getting lost, calling for help — instead of generic phrase translation.
 
 ## Pipeline
 
-Speech (Tamil) → Local STT (Whisper) → Intent Detection → Local Translation (M2M100) → Local TTS (espeak-ng) → Foreigner hears it
+Speech (Tamil) → Local STT (Whisper) → Intent Detection → Translation (Google, no key needed) → Local TTS (espeak-ng) → Foreigner hears it
 Foreigner replies → Local STT → Translation back to Tamil → Local TTS → Tourist hears it
 
 ## Why it's meaningful
 
-Most translator demos just swap words. This one adds **intent detection**: if the sentence matches emergency or medical keywords, it's flagged in red before translation, so urgency isn't lost even if the translation is imperfect. Quick-phrase buttons cover common tourist emergencies without needing a working mic (useful for demos/judging).
+Most translator demos just swap words. This one adds **intent detection**: if the sentence matches emergency or medical keywords, it's flagged in red before translation, so urgency isn't lost even if the translation is imperfect.
 
 ## Stack
 
 - **STT:** `faster-whisper` (small model) — runs locally on CPU, no API key, no network calls
-- **Translation:** `facebook/m2m100_418M` via HuggingFace `transformers` — local neural machine translation covering Tamil and 100 languages
+- **Translation:** `deep-translator`'s `GoogleTranslator` — hits Google Translate's public web backend, no API key or account needed, much more accurate than fully offline MT models for Tamil
 - **TTS:** `espeak-ng` — local offline speech synthesizer (robotic but real, no external dependency)
 - **Intent detection:** rule-based keyword classifier
 
@@ -23,8 +23,7 @@ Most translator demos just swap words. This one adds **intent detection**: if th
 - Bidirectional voice translation (10 languages)
 - Live mic recording in-browser
 - Typed input fallback
-- Pre-built emergency/direction quick phrases
-- Fully offline after first model download — works with no internet once set up
+- Styled UI with intent badges and result cards
 
 ## Local setup
 
@@ -34,14 +33,18 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-First run downloads the Whisper and M2M100 model weights (~2GB total) — after that it works fully offline.
-
 ## Deployment note
 
-This stack is CPU/RAM-heavy: Whisper-small (~500MB) + M2M100-418M (~1.5GB) both load into memory. **Streamlit Community Cloud's free tier (1GB RAM) will likely fail to run this** — it's built for local use, a university lab machine, or a paid/self-hosted server with at least 4GB RAM. If you need it on Streamlit Cloud specifically, swap in smaller models: `WhisperModel("tiny")` and consider `facebook/m2m100_418M` is already the smallest M2M100 variant, so you may need a different host instead.
+STT (Whisper-small, ~500MB) still needs real RAM/CPU. This will run on Streamlit Community Cloud's free tier more comfortably than the earlier M2M100 version, but if you hit memory limits, switch `WhisperModel("small", ...)` to `WhisperModel("tiny", ...)` in `app.py` — it's faster and lighter, at a small accuracy cost.
+
+## Translation API notes
+
+`deep-translator`'s Google backend needs no key and has no hard published limit, but it's an unofficial wrapper around Google's public translate endpoint, so heavy sustained use can get temporarily rate-limited (Google allows 5 requests/second, 200k/day per IP). The app now caches translations so Streamlit's automatic reruns don't resend the same request, and automatically falls back to MyMemory if Google throttles it. If you still hit limits under heavy use:
+
+- **LibreTranslate** — open source; self-host it for genuinely unlimited use, or use the public instance with a free API key (rate-limited)
+- **MyMemory** — free, no key for light use; free email registration raises the limit to 50,000 words/day
 
 ## Notes
 
-- Whisper and M2M100 both officially support Tamil, so accuracy is reasonable, though not as strong as the big cloud APIs.
-- espeak-ng's Tamil voice is functional but robotic-sounding — this is the tradeoff for zero external dependency.
-- For a production version with better voice quality, a self-hosted TTS model (e.g. Coqui TTS) could replace espeak-ng while staying offline.
+- Whisper officially supports Tamil, so STT accuracy is solid.
+- espeak-ng's Tamil voice is functional but robotic-sounding — that's the tradeoff for zero external TTS dependency. For better voice quality later, a self-hosted model like Coqui TTS could replace it while staying offline.
