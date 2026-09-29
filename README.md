@@ -48,3 +48,5 @@ STT (Whisper-small, ~500MB) still needs real RAM/CPU. This will run on Streamlit
 
 - Whisper officially supports Tamil, so STT accuracy is solid.
 - espeak-ng's Tamil voice is functional but robotic-sounding — that's the tradeoff for zero external TTS dependency. For better voice quality later, a self-hosted model like Coqui TTS could replace it while staying offline.
+
+## Live Demo: https://ai-tourist-communication-assistant-2ja4xpesioqjrqbpsvlenw.streamlit.app/
